@@ -1,0 +1,182 @@
+.story-input {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.input-method-selector {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  justify-content: center;
+}
+
+.method-btn {
+  padding: 12px 24px;
+  border: 2px solid #ddd;
+  background: white;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.method-btn.active {
+  background: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.method-btn:hover {
+  border-color: #667eea;
+  transform: translateY(-2px);
+}
+
+.text-input-section {
+  text-align: center;
+}
+
+.story-textarea {
+  width: 100%;
+  padding: 1rem;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  margin-bottom: 1rem;
+  box-sizing: border-box;
+}
+
+.story-textarea:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.voice-input-section {
+  text-align: center;
+}
+
+.recording-interface {
+  padding: 2rem;
+}
+
+.record-button {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+.record-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: none;
+  background: #ff4757;
+  color: white;
+  font-size: 2rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.record-btn:hover {
+  transform: scale(1.1);
+}
+
+.record-button.recording .record-btn {
+  background: #ff3742;
+  animation: pulse 1.5s infinite;
+}
+
+.recording-status {
+  font-size: 1.1rem;
+  color: #666;
+  margin: 1rem 0;
+}
+
+.recording-indicator {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.pulse {
+  width: 12px;
+  height: 12px;
+  background: #ff4757;
+  border-radius: 50%;
+  animation: pulse 1s infinite;
+}
+
+.processing-indicator {
+  text-align: center;
+  padding: 2rem;
+}
+
+.processing-indicator p {
+  margin-top: 1rem;
+  color: #666;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.demo-section {
+  text-align: center;
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #eee;
+}
+
+.demo-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.demo-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.demo-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.demo-text {
+  margin: 0.5rem 0 0 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+  .input-method-selector {
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .method-btn {
+    width: 200px;
+  }
+}
