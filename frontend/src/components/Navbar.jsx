@@ -10,7 +10,7 @@ const Navbar = () => {
   const navItems = [
     { path: '/', label: 'Home', icon: Home },
     { path: '/create', label: 'Create Story', icon: PlusCircle },
-    { path: '/about', label: 'About', icon: Info },
+    // { path: '/about', label: 'About', icon: Info },
   ]
 
   const isActive = (path) => location.pathname === path

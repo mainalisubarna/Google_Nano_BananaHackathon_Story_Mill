@@ -97,6 +97,26 @@ export const storyAPI = {
     return response.data
   },
 
+  // NEW: AI Image Editing Functions (NanoBanana)
+  
+  // Edit a specific scene image with AI
+  editSceneImage: async (editData) => {
+    const response = await api.post('/story/edit-scene-image', editData)
+    return response.data
+  },
+
+  // Batch edit multiple images
+  batchEditImages: async (editRequests) => {
+    const response = await api.post('/story/batch-edit-images', { editRequests })
+    return response.data
+  },
+
+  // Chat-based image editing
+  chatEdit: async (chatData) => {
+    const response = await api.post('/story/chat-edit', chatData)
+    return response.data
+  },
+
   // Get demo story
   getDemo: async () => {
     const response = await api.get('/story/demo')
@@ -106,6 +126,12 @@ export const storyAPI = {
   // Get backend status
   getStatus: async () => {
     const response = await api.get('/story/status')
+    return response.data
+  },
+  
+  // Export story as video
+  exportStoryVideo: async (exportData) => {
+    const response = await api.post('/story/export-video', exportData)
     return response.data
   }
 }

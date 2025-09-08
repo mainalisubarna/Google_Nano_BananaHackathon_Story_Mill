@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { analyzeStory, generateEditPrompt, extractCharacters } = require('../services/geminiService');
-const { generateSceneImages } = require('../services/imageService');
+const { generateSceneImages, editImageWithAI } = require('../services/imageService');
 const { generateSceneNarration } = require('../services/audioService');
 const { createStoryVideo } = require('../services/videoService');
 const { validateStoryInput, validateScenes, validateVideoRequirements } = require('../utils/validation');
@@ -38,18 +38,17 @@ router.post('/analyze', async (req, res) => {
 
 /**
  * POST /api/story/generate-scenes
- * Generate scenes with images for frontend slideshow
+ * Generate scenes with enhanced image integration
  */
 router.post('/generate-scenes', async (req, res) => {
   try {
-    const { storyText, uploadedImages } = req.body;
+    const { storyText, uploadedImages, uploadedImageContexts } = req.body;
 
     if (!storyText || typeof storyText !== 'string') {
       return res.status(400).json({ error: 'Valid story text is required' });
     }
 
-    console.log(`📝 Processing story for scenes: "${storyText.substring(0, 100)}..."`);
-    console.log(`🖼️ Uploaded images: ${uploadedImages ? uploadedImages.length : 0}`);
+    // Process story with uploaded content
 
     // Step 1: Analyze story and extract characters
     const [scenes, characters] = await Promise.all([
@@ -59,17 +58,25 @@ router.post('/generate-scenes', async (req, res) => {
 
     console.log(`📖 Story analyzed: ${scenes.length} scenes, ${Object.keys(characters).length} characters`);
 
-    // Step 2: Process images ONLY (no audio generation in backend)
-    const scenesWithImages = await generateSceneImages(scenes, characters, uploadedImages);
+    // Step 2: Enhanced image processing with contexts for smart scene integration
+    const scenesWithImages = await generateSceneImages(
+      scenes, 
+      characters, 
+      uploadedImages || [], 
+      uploadedImageContexts || []
+    );
 
-    // Step 3: Prepare scenes for frontend with proper text property
+    // Step 3: Prepare scenes for frontend with enhanced metadata
     const frontendScenes = scenesWithImages.map(scene => ({
       ...scene,
       text: scene.description || scene.text || '', // Text for frontend narration
       narrationText: scene.description || scene.text || '' // Explicit narration text
     }));
 
-    console.log('✅ Scenes with images generated successfully');
+    console.log('✅ Enhanced scenes with smart image integration generated successfully');
+
+    // Calculate integration statistics
+    const scenesWithUploads = frontendScenes.filter(scene => scene.usedUploadedImage || scene.image?.type === 'uploaded-edited').length;
 
     res.json({
       success: true,
@@ -77,7 +84,14 @@ router.post('/generate-scenes', async (req, res) => {
       characters,
       totalScenes: frontendScenes.length,
       hasUploadedImages: uploadedImages && uploadedImages.length > 0,
-      originalText: storyText
+      originalText: storyText,
+      // Enhanced metadata for frontend tracking
+      imageIntegration: {
+        uploadedCount: uploadedImages ? uploadedImages.length : 0,
+        contextsAnalyzed: uploadedImageContexts ? uploadedImageContexts.length : 0,
+        scenesWithUploads: scenesWithUploads,
+        integrationMethod: uploadedImageContexts && uploadedImageContexts.length > 0 ? 'smart-context-matching' : 'basic'
+      }
     });
   } catch (error) {
     console.error('Scene generation error:', error);
@@ -360,6 +374,282 @@ router.get('/status', async (req, res) => {
     console.error('Status check error:', error);
     res.status(500).json({
       error: 'Failed to get system status',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/story/edit-scene-image
+ * Edit a specific scene image using AI (NanoBanana)
+ * This is the core endpoint for real-time image editing
+ */
+router.post('/edit-scene-image', async (req, res) => {
+  try {
+    const { 
+      originalImageBase64, 
+      editPrompt, 
+      sceneNumber, 
+      sceneContext 
+    } = req.body;
+
+    // Validation
+    if (!originalImageBase64) {
+      return res.status(400).json({ 
+        error: 'Original image data is required' 
+      });
+    }
+
+    if (!editPrompt || typeof editPrompt !== 'string') {
+      return res.status(400).json({ 
+        error: 'Valid edit prompt is required' 
+      });
+    }
+
+    console.log(`🍌 NanoBanana editing scene ${sceneNumber}: "${editPrompt}"`);
+
+    // Call our new AI editing function
+    const editResult = await editImageWithAI(
+      originalImageBase64, 
+      editPrompt, 
+      sceneContext || {}
+    );
+
+    console.log('✅ Scene image edited successfully');
+
+    res.json({
+      success: true,
+      editedImage: editResult.imageData,
+      editPrompt: editPrompt,
+      sceneNumber: sceneNumber,
+      editId: editResult.editId,
+      timestamp: editResult.generatedAt
+    });
+
+  } catch (error) {
+    console.error('Scene image editing error:', error);
+    res.status(500).json({
+      error: 'Failed to edit scene image',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/story/batch-edit-images
+ * Edit multiple scene images in a single request
+ * Useful for applying consistent changes across scenes
+ */
+router.post('/batch-edit-images', async (req, res) => {
+  try {
+    const { editRequests } = req.body;
+
+    if (!Array.isArray(editRequests) || editRequests.length === 0) {
+      return res.status(400).json({ 
+        error: 'Edit requests array is required' 
+      });
+    }
+
+    console.log(`🍌 NanoBanana batch editing ${editRequests.length} images`);
+
+    const editResults = [];
+    const errors = [];
+
+    // Process each edit request
+    for (let i = 0; i < editRequests.length; i++) {
+      const request = editRequests[i];
+      
+      try {
+        const editResult = await editImageWithAI(
+          request.originalImageBase64,
+          request.editPrompt,
+          request.sceneContext || {}
+        );
+
+        editResults.push({
+          index: i,
+          sceneNumber: request.sceneNumber,
+          success: true,
+          editedImage: editResult.imageData,
+          editId: editResult.editId
+        });
+
+      } catch (error) {
+        errors.push({
+          index: i,
+          sceneNumber: request.sceneNumber,
+          error: error.message
+        });
+      }
+
+      // Rate limiting between requests
+      if (i < editRequests.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    console.log(`✅ Batch editing completed: ${editResults.length} success, ${errors.length} errors`);
+
+    res.json({
+      success: true,
+      results: editResults,
+      errors: errors,
+      totalRequests: editRequests.length,
+      successCount: editResults.length,
+      errorCount: errors.length
+    });
+
+  } catch (error) {
+    console.error('Batch image editing error:', error);
+    res.status(500).json({
+      error: 'Failed to process batch edit requests',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/story/chat-edit
+ * Natural language chat interface for image editing
+ * Processes conversational requests and maintains context
+ */
+router.post('/chat-edit', async (req, res) => {
+  try {
+    const { 
+      chatMessage, 
+      currentImageBase64, 
+      sceneContext,
+      conversationHistory = []
+    } = req.body;
+
+    if (!chatMessage || typeof chatMessage !== 'string') {
+      return res.status(400).json({ 
+        error: 'Chat message is required' 
+      });
+    }
+
+    if (!currentImageBase64) {
+      return res.status(400).json({ 
+        error: 'Current image is required for editing' 
+      });
+    }
+
+    console.log(`💬 Chat edit request: "${chatMessage}"`);
+
+    // Process the conversational request into an edit prompt
+    const editPrompt = await processChatEditRequest(
+      chatMessage, 
+      sceneContext, 
+      conversationHistory
+    );
+
+    // Apply the edit using NanoBanana
+    const editResult = await editImageWithAI(
+      currentImageBase64,
+      editPrompt,
+      sceneContext || {}
+    );
+
+    // Update conversation history
+    const updatedHistory = [
+      ...conversationHistory,
+      {
+        role: 'user',
+        message: chatMessage,
+        timestamp: new Date().toISOString()
+      },
+      {
+        role: 'assistant',
+        message: `Applied edit: ${editPrompt}`,
+        editId: editResult.editId,
+        timestamp: editResult.generatedAt
+      }
+    ];
+
+    console.log('✅ Chat edit completed successfully');
+
+    res.json({
+      success: true,
+      editedImage: editResult.imageData,
+      interpretedPrompt: editPrompt,
+      conversationHistory: updatedHistory,
+      editId: editResult.editId,
+      chatResponse: `I've ${editPrompt.toLowerCase()}. How does it look?`
+    });
+
+  } catch (error) {
+    console.error('Chat edit error:', error);
+    res.status(500).json({
+      error: 'Failed to process chat edit request',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * Helper function to process conversational edit requests
+ */
+const processChatEditRequest = async (chatMessage, sceneContext, history) => {
+  // Simple prompt conversion - can be enhanced with more sophisticated NLP
+  let editPrompt = chatMessage.toLowerCase();
+
+  // Convert common conversational phrases to edit instructions
+  const conversions = {
+    'change the color of': 'change color of',
+    'make the': 'make',
+    'can you': '',
+    'please': '',
+    'i want': '',
+    'could you': '',
+    'change to': 'change to',
+    'make it': 'make',
+    'turn the': 'change the'
+  };
+
+  Object.entries(conversions).forEach(([phrase, replacement]) => {
+    editPrompt = editPrompt.replace(new RegExp(phrase, 'gi'), replacement);
+  });
+
+  return editPrompt.trim();
+};
+
+/**
+ * POST /api/story/export-video
+ * Export story as a downloadable video
+ */
+router.post('/export-video', async (req, res) => {
+  try {
+    const { storyId, title, scenes } = req.body;
+    
+    if (!scenes || !Array.isArray(scenes) || scenes.length === 0) {
+      return res.status(400).json({ 
+        error: 'Valid scenes are required',
+        details: 'Please provide an array of scene objects'
+      });
+    }
+
+    console.log(`🎬 Exporting story as video: "${title}" with ${scenes.length} scenes`);
+    
+    // Generate a unique video ID
+    const videoId = `story-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    
+    // Create the video using videoService
+    const videoData = await createStoryVideo(scenes, title);
+    
+    // Return success with video URL
+    res.json({
+      success: true,
+      videoId: videoData.videoId,
+      videoUrl: `/api/video/download/${videoData.videoId}`,
+      streamUrl: `/api/video/stream/${videoData.videoId}`,
+      title: title,
+      sceneCount: scenes.length
+    });
+    
+  } catch (error) {
+    console.error('Video export error:', error);
+    res.status(500).json({
+      error: 'Failed to export video',
       details: error.message
     });
   }

@@ -1,68 +1,70 @@
-const ffmpeg = require('fluent-ffmpeg');
+// No longer using FFmpeg due to Windows compatibility issues
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { createCanvas, loadImage } = require('canvas'); // Using node-canvas instead of FFmpeg
 const { generateId } = require('../utils/apiHelpers');
-
-// Configure FFmpeg path for Windows
-const ffmpegPath = path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages', 'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe', 'ffmpeg-8.0-full_build', 'bin', 'ffmpeg.exe');
-const ffprobePath = path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages', 'Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe', 'ffmpeg-8.0-full_build', 'bin', 'ffprobe.exe');
-
-if (fs.existsSync(ffmpegPath)) {
-    ffmpeg.setFfmpegPath(ffmpegPath);
-    ffmpeg.setFfprobePath(ffprobePath);
-    console.log('✅ FFmpeg configured successfully');
-} else {
-    console.warn('⚠️ FFmpeg not found at expected path, trying system PATH');
-}
+const { PassThrough } = require('stream');
+const archiver = require('archiver'); // For creating ZIP files
 
 // Videos directory for backward compatibility only
 const videosDir = path.join(__dirname, '../videos');
 
+// Ensure videos directory exists
+if (!fs.existsSync(videosDir)) {
+    fs.mkdirSync(videosDir, { recursive: true });
+    console.log('✅ Videos directory created successfully');
+}
+
 /**
- * Create actual MP4 video from scenes - NO PERMANENT STORAGE
+ * Create story presentation assets (images + HTML viewer) instead of MP4
  */
-const createStoryVideo = async (scenes) => {
+const createStoryVideo = async (scenes, title = 'StoryMill Generated Story') => {
     const videoId = generateId();
     const tempDir = path.join(__dirname, '../temp', videoId);
-    const outputPath = path.join(tempDir, `storymill_${videoId}.mp4`); // Store in temp, not videos
+    const outputZipPath = path.join(tempDir, `storymill_${videoId}.zip`); // Store as ZIP file
 
     try {
         // Create temp directory for this video
         fs.mkdirSync(tempDir, { recursive: true });
 
-        console.log(`Creating temporary MP4 video for ${scenes.length} scenes...`);
+        console.log(`Creating presentation package for ${scenes.length} scenes...`);
 
         // Download and prepare all assets
         const preparedScenes = await prepareVideoAssets(scenes, tempDir);
-
-        // Create MP4 video using FFmpeg
-        const videoPath = await generateMP4Video(preparedScenes, outputPath, videoId);
+        
+        // Create HTML presentation viewer
+        await generateHTMLPresentation(preparedScenes, tempDir, title);
+        
+        // Create GIF preview
+        const gifPath = await generateGIFPreview(preparedScenes, tempDir);
+        
+        // Create ZIP archive with all content
+        await createZipArchive(tempDir, outputZipPath);
 
         const videoData = {
-            id: videoId,
-            title: 'StoryMill Generated Story',
-            videoPath: videoPath,
+            videoId: videoId,
+            title: title || 'StoryMill Generated Story',
+            videoPath: outputZipPath,
             tempDir: tempDir, // Include temp dir for cleanup
             downloadUrl: `/api/video/download/${videoId}`,
             totalDuration: scenes.reduce((sum, scene) => sum + (scene.duration || 4), 0),
             scenes: preparedScenes.length,
             metadata: {
                 createdAt: new Date().toISOString(),
-                format: 'mp4',
+                format: 'html-presentation',
                 resolution: '1920x1080',
-                fps: 60,
                 temporary: true // Mark as temporary
             }
         };
 
-        console.log(`✅ Temporary MP4 video created: ${videoPath}`);
+        console.log(`✅ Presentation package created: ${outputZipPath}`);
 
         // Schedule cleanup after 1 hour
         setTimeout(() => {
             if (fs.existsSync(tempDir)) {
                 fs.rmSync(tempDir, { recursive: true, force: true });
-                console.log(`🗑️ Cleaned up temporary video: ${videoId}`);
+                console.log(`🗑️ Cleaned up temporary presentation: ${videoId}`);
             }
         }, 60 * 60 * 1000); // 1 hour
 
@@ -375,10 +377,560 @@ const generateMP4Video = async (scenes, outputPath) => {
 };
 
 /**
+ * Generate HTML presentation with images, text, and basic transition effects
+ */
+const generateHTMLPresentation = async (scenes, outputDir, title) => {
+    const htmlPath = path.join(outputDir, 'index.html');
+    const cssPath = path.join(outputDir, 'styles.css');
+    const jsPath = path.join(outputDir, 'script.js');
+    
+    // Copy all images to a consistent location with proper naming
+    for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        if (scene.imagePath && fs.existsSync(scene.imagePath)) {
+            const newImagePath = path.join(outputDir, `scene_${i + 1}.jpg`);
+            fs.copyFileSync(scene.imagePath, newImagePath);
+            scene.webImagePath = `scene_${i + 1}.jpg`;
+        }
+        
+        // Copy audio if available
+        if (scene.audioPath && fs.existsSync(scene.audioPath)) {
+            const newAudioPath = path.join(outputDir, `scene_${i + 1}_narration.mp3`);
+            fs.copyFileSync(scene.audioPath, newAudioPath);
+            scene.webAudioPath = `scene_${i + 1}_narration.mp3`;
+        }
+        
+        // Ambient sound functionality removed as it's not used
+    }
+    
+    // Generate HTML content
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="story-container">
+        <header>
+            <h1>${title}</h1>
+            <div class="controls">
+                <button id="prevBtn">Previous</button>
+                <button id="playBtn">Play</button>
+                <button id="nextBtn">Next</button>
+                <div class="progress-container">
+                    <div id="progress-bar"></div>
+                </div>
+            </div>
+        </header>
+        
+        <div id="slideshow">
+            ${scenes.map((scene, index) => `
+            <div class="slide" data-index="${index}" ${scene.webAudioPath ? `data-audio="${scene.webAudioPath}"` : ''} data-duration="${scene.duration || 4}">
+                <div class="slide-image" style="background-image: url('${scene.webImagePath}')"></div>
+                <div class="slide-content">
+                    <div class="narration">${scene.description || ''}</div>
+                </div>
+            </div>
+            `).join('')}
+        </div>
+        
+        <div class="thumbnails">
+            ${scenes.map((scene, index) => `
+            <div class="thumbnail" data-index="${index}">
+                <div class="thumb-img" style="background-image: url('${scene.webImagePath}')"></div>
+                <div class="thumb-num">${index + 1}</div>
+            </div>
+            `).join('')}
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>`;
+
+    // Generate CSS content
+    const cssContent = `* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Arial', sans-serif;
+}
+
+body {
+    background-color: #111;
+    color: #fff;
+    overflow-x: hidden;
+}
+
+.story-container {
+    max-width: 100%;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+header {
+    padding: 20px 0;
+    text-align: center;
+}
+
+header h1 {
+    margin-bottom: 20px;
+    color: #f0f0f0;
+    font-size: 2rem;
+}
+
+.controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+.progress-container {
+    width: 100%;
+    height: 10px;
+    background-color: #333;
+    margin-top: 20px;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+#progress-bar {
+    height: 100%;
+    background-color: #3498db;
+    width: 0;
+    transition: width 0.3s;
+}
+
+#slideshow {
+    position: relative;
+    width: 100%;
+    height: 70vh;
+    overflow: hidden;
+    margin-bottom: 20px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+    border-radius: 5px;
+}
+
+.slide {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+    display: flex;
+    flex-direction: column;
+}
+
+.slide.active {
+    opacity: 1;
+    z-index: 1;
+}
+
+.slide-image {
+    flex: 1;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+.slide-content {
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.7);
+    max-height: 30%;
+    overflow-y: auto;
+}
+
+.narration {
+    font-size: 1.2rem;
+    line-height: 1.6;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.thumbnails {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 10px 0;
+    margin-top: auto;
+}
+
+.thumbnail {
+    flex: 0 0 120px;
+    height: 80px;
+    position: relative;
+    border: 2px solid transparent;
+    border-radius: 3px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.thumbnail.active {
+    border-color: #3498db;
+    transform: scale(1.05);
+}
+
+.thumb-img {
+    width: 100%;
+    height: 100%;
+    background-size: cover;
+    background-position: center;
+}
+
+.thumb-num {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8rem;
+}
+
+@media (max-width: 768px) {
+    #slideshow {
+        height: 50vh;
+    }
+    
+    .thumbnails {
+        gap: 5px;
+    }
+    
+    .thumbnail {
+        flex: 0 0 80px;
+        height: 60px;
+    }
+    
+    .narration {
+        font-size: 1rem;
+    }
+}`;
+
+    // Generate JS content
+    const jsContent = `document.addEventListener('DOMContentLoaded', () => {
+    // DOM elements
+    const slideshow = document.getElementById('slideshow');
+    const slides = document.querySelectorAll('.slide');
+    const thumbnails = document.querySelectorAll('.thumbnail');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const playBtn = document.getElementById('playBtn');
+    const progressBar = document.getElementById('progress-bar');
+    
+    // Variables
+    let currentSlide = 0;
+    let isPlaying = false;
+    let slideInterval;
+    let audioElements = {};
+    
+    // Initialize
+    function init() {
+        showSlide(0);
+        
+        // Preload audio
+        slides.forEach((slide, index) => {
+            const audioSrc = slide.dataset.audio;
+            
+            if (audioSrc) {
+                const audio = new Audio(audioSrc);
+                audio.preload = 'auto';
+                audioElements[index] = audio;
+            }
+        });
+    }
+    
+    // Show slide
+    function showSlide(index) {
+        // Stop any playing audio
+        Object.values(audioElements).forEach(audio => {
+            audio.pause();
+            audio.currentTime = 0;
+        });
+        
+        // Remove active class from all slides and thumbnails
+        slides.forEach(slide => slide.classList.remove('active'));
+        thumbnails.forEach(thumb => thumb.classList.remove('active'));
+        
+        // Add active class to current slide and thumbnail
+        slides[index].classList.add('active');
+        thumbnails[index].classList.add('active');
+        
+        // Play audio if available
+        if (audioElements[index]) {
+            audioElements[index].play();
+        }
+        
+        // Update current slide
+        currentSlide = index;
+        
+        // Update progress bar
+        updateProgress();
+    }
+    
+    // Next slide
+    function nextSlide() {
+        if (currentSlide < slides.length - 1) {
+            showSlide(currentSlide + 1);
+        } else {
+            showSlide(0); // Loop back to first slide
+        }
+    }
+    
+    // Previous slide
+    function prevSlide() {
+        if (currentSlide > 0) {
+            showSlide(currentSlide - 1);
+        } else {
+            showSlide(slides.length - 1); // Loop to last slide
+        }
+    }
+    
+    // Play slideshow
+    function playSlideshow() {
+        if (isPlaying) {
+            clearInterval(slideInterval);
+            playBtn.textContent = 'Play';
+            isPlaying = false;
+        } else {
+            const duration = parseInt(slides[currentSlide].dataset.duration) * 1000 || 4000;
+            playBtn.textContent = 'Pause';
+            isPlaying = true;
+            
+            // Wait for current slide duration before advancing
+            slideInterval = setTimeout(() => {
+                nextSlide();
+                // After advancing, continue with regular interval
+                slideInterval = setInterval(() => {
+                    const nextIndex = (currentSlide + 1) % slides.length;
+                    showSlide(nextIndex);
+                    
+                    // If we've looped back to the beginning, stop playing
+                    if (nextIndex === 0) {
+                        clearInterval(slideInterval);
+                        playBtn.textContent = 'Play';
+                        isPlaying = false;
+                    }
+                }, duration);
+            }, duration);
+        }
+    }
+    
+    // Update progress bar
+    function updateProgress() {
+        const progress = (currentSlide / (slides.length - 1)) * 100;
+        progressBar.style.width = \`\${progress}%\`;
+    }
+    
+    // Event listeners
+    prevBtn.addEventListener('click', () => {
+        if (isPlaying) {
+            clearInterval(slideInterval);
+            playBtn.textContent = 'Play';
+            isPlaying = false;
+        }
+        prevSlide();
+    });
+    
+    nextBtn.addEventListener('click', () => {
+        if (isPlaying) {
+            clearInterval(slideInterval);
+            playBtn.textContent = 'Play';
+            isPlaying = false;
+        }
+        nextSlide();
+    });
+    
+    playBtn.addEventListener('click', playSlideshow);
+    
+    thumbnails.forEach((thumb, index) => {
+        thumb.addEventListener('click', () => {
+            if (isPlaying) {
+                clearInterval(slideInterval);
+                playBtn.textContent = 'Play';
+                isPlaying = false;
+            }
+            showSlide(index);
+        });
+    });
+    
+    // Initialize slideshow
+    init();
+});`;
+
+    // Write files
+    fs.writeFileSync(htmlPath, htmlContent);
+    fs.writeFileSync(cssPath, cssContent);
+    fs.writeFileSync(jsPath, jsContent);
+    
+    console.log(`✅ HTML presentation created at ${htmlPath}`);
+    return htmlPath;
+};
+
+/**
+ * Generate a preview image from the first scene
+ * (Simplified version that just creates a thumbnail image instead of an animated GIF)
+ */
+const generateGIFPreview = async (scenes, outputDir) => {
+    const previewPath = path.join(outputDir, 'preview.jpg');
+    const width = 320;
+    const height = 180;
+    
+    // Create canvas
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+    
+    try {
+        // Use the first scene for preview
+        const scene = scenes[0];
+        
+        // Fill with black background
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, width, height);
+        
+        if (scene.imagePath && fs.existsSync(scene.imagePath)) {
+            const image = await loadImage(scene.imagePath);
+            
+            // Calculate aspect ratio to maintain proportions
+            const aspectRatio = image.width / image.height;
+            let drawWidth, drawHeight;
+            
+            if (aspectRatio > width / height) {
+                // Image is wider
+                drawWidth = width;
+                drawHeight = width / aspectRatio;
+            } else {
+                // Image is taller
+                drawHeight = height;
+                drawWidth = height * aspectRatio;
+            }
+            
+            // Center the image
+            const x = (width - drawWidth) / 2;
+            const y = (height - drawHeight) / 2;
+            
+            // Draw image
+            ctx.drawImage(image, x, y, drawWidth, drawHeight);
+            
+            // Add "preview" text
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, height - 30, width, 30);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Preview - Download for full story', width / 2, height - 15);
+            
+            // Save to file
+            const buffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
+            fs.writeFileSync(previewPath, buffer);
+            
+            console.log(`✅ Preview image created at ${previewPath}`);
+            return previewPath;
+        }
+    } catch (error) {
+        console.error('Error generating preview image:', error);
+    }
+    
+    // Create a fallback preview if the above fails
+    try {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Story Preview', width / 2, height / 2 - 20);
+        
+        ctx.font = '14px Arial';
+        ctx.fillText('Download to view full presentation', width / 2, height / 2 + 20);
+        
+        // Save to file
+        const buffer = canvas.toBuffer('image/jpeg', { quality: 0.9 });
+        fs.writeFileSync(previewPath, buffer);
+        
+        console.log(`✅ Fallback preview image created at ${previewPath}`);
+        return previewPath;
+    } catch (error) {
+        console.error('Error generating fallback preview:', error);
+        return null;
+    }
+};
+
+/**
+ * Create a ZIP archive with all presentation content
+ */
+const createZipArchive = async (sourceDir, outputZipPath) => {
+    return new Promise((resolve, reject) => {
+        // Create output stream
+        const output = fs.createWriteStream(outputZipPath);
+        const archive = archiver('zip', {
+            zlib: { level: 9 } // Maximum compression
+        });
+        
+        // Listen for all archive data to be written
+        output.on('close', () => {
+            console.log(`✅ ZIP archive created: ${outputZipPath} (${archive.pointer()} bytes)`);
+            resolve(outputZipPath);
+        });
+        
+        archive.on('error', (err) => {
+            reject(err);
+        });
+        
+        // Pipe archive data to the output file
+        archive.pipe(output);
+        
+        // Add all files from the source directory
+        archive.directory(sourceDir, false);
+        
+        // Finalize the archive
+        archive.finalize();
+    });
+};
+
+/**
  * Get video file for download - from temp directory
  */
 const getVideoFile = (videoId) => {
-    // Try temp directory first (new approach)
+    // Check for ZIP file (new approach)
+    const zipPath = path.join(__dirname, '../temp', videoId, `storymill_${videoId}.zip`);
+    
+    if (fs.existsSync(zipPath)) {
+        return {
+            path: zipPath,
+            filename: `storymill_${videoId}.zip`,
+            size: fs.statSync(zipPath).size,
+            temporary: true,
+            format: 'zip'
+        };
+    }
+    
+    // Try temp directory for MP4 (backward compatibility)
     const tempVideoPath = path.join(__dirname, '../temp', videoId, `storymill_${videoId}.mp4`);
 
     if (fs.existsSync(tempVideoPath)) {
@@ -386,7 +938,8 @@ const getVideoFile = (videoId) => {
             path: tempVideoPath,
             filename: `storymill_${videoId}.mp4`,
             size: fs.statSync(tempVideoPath).size,
-            temporary: true
+            temporary: true,
+            format: 'mp4'
         };
     }
 
@@ -398,7 +951,8 @@ const getVideoFile = (videoId) => {
             path: videoPath,
             filename: `storymill_${videoId}.mp4`,
             size: fs.statSync(videoPath).size,
-            temporary: false
+            temporary: false,
+            format: 'mp4'
         };
     }
 

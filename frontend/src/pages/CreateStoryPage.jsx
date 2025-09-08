@@ -15,13 +15,15 @@ import {
   CheckCircle,
   AlertCircle,
   Volume2,
-  VolumeX
+  VolumeX,
+  Image as ImageIcon
 } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { storyAPI } from '../services/api'
 import StoryPreview from '../components/StoryPreview'
-import SlideshowPreview from '../components/SlideshowPreview'
+import VideoLikePlayer from '../components/VideoLikePlayer'
 import ProcessingSteps from '../components/ProcessingSteps'
+import EnhancedImageUpload from '../components/EnhancedImageUpload'
 
 const CreateStoryPage = () => {
   const navigate = useNavigate()
@@ -40,17 +42,39 @@ const CreateStoryPage = () => {
   const [generatedStory, setGeneratedStory] = useState(null)
   const [error, setError] = useState(null)
   
-  // NEW: Image upload functionality
+  // Enhanced image upload functionality
   const [uploadedImages, setUploadedImages] = useState([])
   const [showImageUpload, setShowImageUpload] = useState(false)
+  const [imageContexts, setImageContexts] = useState([]) // Store analyzed image contexts
   const imageInputRef = useRef(null)
 
   const processingSteps = [
-    { title: 'Analyzing Story', description: 'AI is reading and understanding your story...' },
-    { title: 'Creating Scenes', description: 'Breaking story into visual scenes...' },
-    { title: 'Processing Images', description: uploadedImages.length > 0 ? 'Editing your uploaded images...' : 'Creating beautiful illustrations...' },
-    { title: 'Preparing Slideshow', description: 'Setting up your interactive presentation...' }
+    { title: 'Processing', description: 'Your request is being processed...' }
   ]
+
+  // Enhanced image analysis callback
+  const handleImageAnalysis = (analyzedImages) => {
+    // Convert analyzed images to contexts for backend
+    const contexts = analyzedImages.map((img, index) => ({
+      imageIndex: index,
+      originalImage: {
+        base64: img.base64,
+        data: img.data,
+        name: img.name,
+        type: img.type
+      },
+      description: img.context.description,
+      subjects: img.context.subjects,
+      setting: img.context.setting,
+      mood: img.context.mood,
+      style: img.context.style,
+      colors: img.context.colors,
+      isAnalyzed: img.context.isAnalyzed
+    }))
+    
+    setImageContexts(contexts)
+    console.log('📸 Image contexts prepared for backend:', contexts)
+  }
 
   // Recording functionality
   const startRecording = async () => {
@@ -159,10 +183,15 @@ const CreateStoryPage = () => {
     setUploadedImages(prev => prev.filter(img => img.id !== imageId))
   }
 
-  // Story generation - NEW SLIDESHOW APPROACH
+  // Story generation - Enhanced with smart image integration
   const generateStory = async () => {
     if (!storyText.trim() && !audioBlob) {
       toast.error('Please provide a story text or audio recording')
+      return
+    }
+
+    if (uploadedImages.length > 0 && imageContexts.length === 0) {
+      toast.error('Please wait for image analysis to complete or click "Analyze Context"')
       return
     }
 
@@ -172,11 +201,21 @@ const CreateStoryPage = () => {
 
     try {
       let requestData = {
+        // Enhanced image data with contexts for smart scene integration
         uploadedImages: uploadedImages.length > 0 ? uploadedImages.map(img => ({
           base64: img.base64,
-          name: img.name
-        })) : null
+          name: img.name,
+          data: img.data
+        })) : null,
+        // Pass analyzed image contexts to backend for smart selection
+        uploadedImageContexts: imageContexts.length > 0 ? imageContexts : null
       }
+
+      console.log('🚀 Sending story generation request with enhanced image data:', {
+        uploadedImages: requestData.uploadedImages?.length || 0,
+        imageContexts: requestData.uploadedImageContexts?.length || 0,
+        hasAnalyzedImages: imageContexts.some(ctx => ctx.isAnalyzed)
+      })
 
       if (inputMethod === 'text') {
         requestData.storyText = storyText.trim()
@@ -201,7 +240,7 @@ const CreateStoryPage = () => {
         }
       }
 
-      // Simulate processing steps
+      // Simulate processing steps with enhanced descriptions
       const stepInterval = setInterval(() => {
         setProcessingStep(prev => {
           if (prev < processingSteps.length - 1) {
@@ -212,24 +251,38 @@ const CreateStoryPage = () => {
         })
       }, 2000)
 
-      // Use new scenes generation (no audio in backend)
+      // Use enhanced scenes generation with smart image integration
       const result = await storyAPI.generateScenes(requestData)
       
       clearInterval(stepInterval)
       setProcessingStep(processingSteps.length - 1)
       
       if (result.success) {
-        // Create slideshow object for frontend
+        // Create enhanced slideshow object for frontend
         const slideshow = {
           type: 'slideshow',
           originalText: result.originalText,
           scenes: result.scenes,
           characters: result.characters,
           totalScenes: result.totalScenes,
-          hasUploadedImages: result.hasUploadedImages
+          hasUploadedImages: result.hasUploadedImages,
+          // Enhanced metadata for better tracking
+          imageIntegration: {
+            uploadedCount: uploadedImages.length,
+            contextsAnalyzed: imageContexts.length,
+            scenesWithUploads: result.scenes?.filter(scene => scene.usedUploadedImage)?.length || 0
+          }
         }
+        
         setGeneratedStory(slideshow)
-        toast.success('Story scenes generated successfully!')
+        
+        // Enhanced success message with integration info
+        if (uploadedImages.length > 0) {
+          const usedScenes = slideshow.imageIntegration.scenesWithUploads
+          toast.success(`Story generated! ${usedScenes} scenes use your uploaded images with smart context adaptation.`)
+        } else {
+          toast.success('Story scenes generated successfully!')
+        }
       } else {
         throw new Error(result.error || 'Story generation failed')
       }
@@ -249,12 +302,8 @@ const CreateStoryPage = () => {
   }
 
   if (generatedStory) {
-    // Check if it's a slideshow presentation or traditional story
-    if (generatedStory.type === 'slideshow') {
-      return <SlideshowPreview presentation={generatedStory} onBack={() => setGeneratedStory(null)} />
-    } else {
-      return <StoryPreview story={generatedStory} onBack={() => setGeneratedStory(null)} />
-    }
+    // Always use VideoLikePlayer for the new experience
+    return <VideoLikePlayer presentation={generatedStory} onBack={() => setGeneratedStory(null)} />
   }
 
   return (
@@ -307,78 +356,62 @@ const CreateStoryPage = () => {
             </div>
           </div>
 
-          {/* NEW: Optional Image Upload Section */}
+          {/* Enhanced Smart Image Upload Section */}
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Product Images (Optional)</h3>
+              <div>
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <ImageIcon className="h-5 w-5 text-primary-600" />
+                  Smart Image Integration
+                  {uploadedImages.length > 0 && (
+                    <span className="bg-primary-100 text-primary-700 px-2 py-1 rounded-full text-sm">
+                      {uploadedImages.length} image{uploadedImages.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Upload images to be intelligently integrated into your story scenes
+                </p>
+              </div>
               <motion.button
                 onClick={() => setShowImageUpload(!showImageUpload)}
                 className="text-primary-600 hover:text-primary-700 flex items-center space-x-2"
                 whileHover={{ scale: 1.05 }}
               >
-                <Upload className="h-4 w-4" />
-                <span>{showImageUpload ? 'Hide' : 'Add Images'}</span>
+                <Sparkles className="h-4 w-4" />
+                <span>{showImageUpload ? 'Hide Upload' : 'Add Images'}</span>
               </motion.button>
             </div>
-            
-            <p className="text-sm text-gray-600 mb-4">
-              Upload product photos (candy, toys, etc.) to create promotional stories. AI will edit your images to fit each scene.
-            </p>
 
-            {showImageUpload && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="border-2 border-dashed border-gray-300 rounded-xl p-6"
-              >
-                <div className="text-center">
-                  <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <button
-                    onClick={() => imageInputRef.current?.click()}
-                    className="btn-primary mb-4"
-                  >
-                    Choose Images
-                  </button>
-                  <p className="text-sm text-gray-600">
-                    Select multiple images (JPG, PNG, WebP) - Max 5MB each
-                  </p>
-                  
-                  <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handleImageUpload}
-                    className="hidden"
+            <AnimatePresence>
+              {showImageUpload && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <EnhancedImageUpload
+                    uploadedImages={uploadedImages}
+                    setUploadedImages={setUploadedImages}
+                    onAnalyzeImages={handleImageAnalysis}
                   />
-                </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-                {/* Image Preview Grid */}
-                {uploadedImages.length > 0 && (
-                  <div className="mt-6">
-                    <h4 className="font-medium mb-3">Uploaded Images ({uploadedImages.length})</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {uploadedImages.map((image) => (
-                        <div key={image.id} className="relative group">
-                          <img
-                            src={image.preview}
-                            alt={image.name}
-                            className="w-full h-24 object-cover rounded-lg border"
-                          />
-                          <button
-                            onClick={() => removeImage(image.id)}
-                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            ×
-                          </button>
-                          <p className="text-xs text-gray-600 mt-1 truncate">{image.name}</p>
-                        </div>
-                      ))}
-                    </div>
+            {/* Quick info about image integration - simplified */}
+            {uploadedImages.length > 0 && !showImageUpload && (
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      {uploadedImages.length} image{uploadedImages.length !== 1 ? 's' : ''} uploaded
+                    </p>
                   </div>
-                )}
-              </motion.div>
+                </div>
+              </div>
             )}
           </div>
 
@@ -590,12 +623,16 @@ const CreateStoryPage = () => {
           </div>
         </div>
 
-        {/* Processing Steps */}
+        {/* Processing Steps - Simplified */}
         {isProcessing && (
-          <ProcessingSteps 
-            steps={processingSteps} 
-            currentStep={processingStep} 
-          />
+          <div className="mt-8 text-center">
+            <div className="inline-block p-4 bg-blue-50 rounded-lg shadow">
+              <div className="flex items-center justify-center">
+                <div className="w-8 h-8 border-4 border-t-blue-500 border-blue-200 rounded-full animate-spin mr-3"></div>
+                <p>Processing your story...</p>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

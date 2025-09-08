@@ -120,32 +120,44 @@ const elevenLabsTextToSpeech = async (text, voiceId = 'pNInz6obpgDQGcFmaJgB') =>
 };
 
 /**
- * Transcribe audio using ElevenLabs (Primary - Superior Accuracy) with Google Cloud fallback
+ * Transcribe audio using Google Cloud (Primary - Fastest) with ElevenLabs fallback
  */
 const transcribeAudio = async (audioBuffer) => {
-    // Try ElevenLabs Speech-to-Text first (better accuracy for natural speech)
-    if (process.env.ELEVENLABS_API_KEY) {
+    // Try Google Cloud first (faster response time)
+    if (process.env.GOOGLE_CLOUD_API_KEY) {
         try {
-            console.log('🎙️ Using ElevenLabs Speech-to-Text (primary - superior accuracy)');
-            return await elevenLabsTranscription(audioBuffer);
+            console.log('🎙️ Using Google Cloud Speech-to-Text (primary - fastest)');
+            const result = await Promise.race([
+                googleCloudTranscription(audioBuffer),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Google Cloud timeout after 10 seconds')), 10000)
+                )
+            ]);
+            return result;
         } catch (error) {
-            console.warn('ElevenLabs transcription failed, trying Google Cloud fallback:', error.message);
+            console.warn('Google Cloud transcription failed, trying ElevenLabs fallback:', error.message);
         }
     }
 
-    // Fallback to Google Cloud if ElevenLabs fails
-    if (process.env.GOOGLE_CLOUD_API_KEY) {
+    // Fallback to ElevenLabs if Google Cloud fails
+    if (process.env.ELEVENLABS_API_KEY) {
         try {
-            console.log('🎙️ Using Google Cloud Speech-to-Text (fallback)');
-            return await googleCloudTranscription(audioBuffer);
+            console.log('🎙️ Using ElevenLabs Speech-to-Text (fallback)');
+            const result = await Promise.race([
+                elevenLabsTranscription(audioBuffer),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('ElevenLabs timeout after 15 seconds')), 15000)
+                )
+            ]);
+            return result;
         } catch (error) {
-            console.error('Google Cloud transcription also failed:', error.message);
+            console.error('ElevenLabs transcription also failed:', error.message);
         }
     }
 
     // If both fail, return error message
     return {
-        transcript: "Audio transcription failed. Please check your API keys or try typing your story instead.",
+        transcript: "Audio transcription failed. Please check your internet connection or try typing your story instead.",
         confidence: 0.0,
         timestamp: new Date().toISOString(),
         provider: 'none'
@@ -153,8 +165,8 @@ const transcribeAudio = async (audioBuffer) => {
 };
 
 /**
- * Google Cloud Speech-to-Text (Fallback - Cost Effective)
- * Using standard model for cost optimization
+ * Google Cloud Speech-to-Text (Primary - Fast & Reliable)
+ * Optimized for speed and cost efficiency
  */
 const googleCloudTranscription = async (audioBuffer) => {
     const audioBase64 = audioBuffer.toString('base64');
@@ -168,13 +180,16 @@ const googleCloudTranscription = async (audioBuffer) => {
                     sampleRateHertz: 48000,
                     languageCode: 'en-US',
                     enableAutomaticPunctuation: true,
-                    // Using standard model (cheaper than enhanced)
-                    model: 'default',
+                    // Using latest model for better speed/accuracy balance
+                    model: 'latest_short',
                     useEnhanced: false
                 },
                 audio: {
                     content: audioBase64
                 }
+            },
+            {
+                timeout: 8000 // 8 second timeout for faster response
             }
         );
     });
@@ -186,11 +201,11 @@ const googleCloudTranscription = async (audioBuffer) => {
 
         return {
             transcript,
-            confidence: response.data.results[0].alternatives[0].confidence || 0.75, // Slightly lower confidence as fallback
+            confidence: response.data.results[0].alternatives[0].confidence || 0.85, // Good confidence for primary
             timestamp: new Date().toISOString(),
-            provider: 'google-cloud-fallback',
+            provider: 'google-cloud-primary',
             cost: 'low', // Standard model is $0.006 per 15 seconds
-            quality: 'good' // Good but not as accurate as ElevenLabs for natural speech
+            quality: 'fast-and-accurate' // Optimized for speed
         };
     } else {
         throw new Error('No transcription results from Google Cloud');
@@ -221,7 +236,8 @@ const elevenLabsTranscription = async (audioBuffer) => {
             headers: {
                 ...formData.getHeaders(),
                 'xi-api-key': process.env.ELEVENLABS_API_KEY
-            }
+            },
+            timeout: 12000 // 12 second timeout
         });
     });
 
@@ -413,27 +429,20 @@ const generateSceneNarration = async (scenes) => {
 
     // Generate all audio in parallel for speed
     const audioPromises = scenes.map(async (scene, index) => {
-        console.log(`🎵 Processing scene ${scene.sceneNumber}: ${scene.description.substring(0, 50)}...`);
-
         // Add small staggered delay to avoid overwhelming API
         await new Promise(resolve => setTimeout(resolve, index * 200));
 
-        // Generate narration and ambient sound in parallel
-        const [audio, ambient] = await Promise.all([
-            textToSpeech(scene.description),
-            generateAmbientSound(scene)
-        ]);
+        // Generate narration
+        const audio = await textToSpeech(scene.description);
 
         return {
             ...scene,
-            audio,
-            ambient
+            audio
         };
     });
 
     const narratedScenes = await Promise.all(audioPromises);
 
-    console.log(`✅ Generated audio for ${narratedScenes.length} scenes with contextual ambience`);
     return narratedScenes;
 };
 
@@ -499,30 +508,9 @@ const generateSceneNarrationOnly = async (scenes) => {
     return narratedScenes;
 };
 
-/**
- * OPTIMIZED SERVICE CONFIGURATION:
- * 
- * TEXT-TO-SPEECH (Cost Optimized):
- * - PRIMARY: Google Cloud TTS - $4 per 1M characters (Standard voices)
- * - FALLBACK: ElevenLabs Turbo v2.5 - Fastest/cheapest EL option
- * 
- * SPEECH-TO-TEXT (Accuracy Optimized):
- * - PRIMARY: ElevenLabs Whisper-1 - Superior accuracy for natural speech
- * - FALLBACK: Google Cloud STT - $0.006 per 15 seconds (Standard model)
- * 
- * AMBIENT SOUNDS (Premium Feature):
- * - ElevenLabs Sound Generation - Optimized settings for cost
- * 
- * STRATEGY:
- * - Use best service for each task (accuracy vs cost)
- * - ElevenLabs excels at speech recognition for storytelling
- * - Google Cloud excels at cost-effective text-to-speech
- * - Graceful fallbacks ensure reliability
- */
 
 module.exports = {
     textToSpeech,
     transcribeAudio,
-    generateAmbientSound,
     generateSceneNarration
 };

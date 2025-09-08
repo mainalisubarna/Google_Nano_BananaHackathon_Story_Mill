@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Loader2 } from 'lucide-react'
 import './SceneEditor.css'
 
 const SceneEditor = ({ storyData, scenes, onScenesGenerated, onPreview, onBack }) => {
@@ -51,20 +52,44 @@ const SceneEditor = ({ storyData, scenes, onScenesGenerated, onPreview, onBack }
     
     setIsEditing(true)
     try {
-      // Use the visual edit endpoint directly
-      const response = await fetch('http://localhost:3001/api/visual/edit', {
+      // First, fetch the image as base64 if it's a URL
+      let originalImageBase64 = selectedScene.image.imageUrl;
+      
+      // If it's not already a base64 string (starts with data:image), fetch it
+      if (!originalImageBase64.startsWith('data:image')) {
+        try {
+          // Get the image from URL and convert to base64
+          const imgResponse = await fetch(selectedScene.image.imageUrl);
+          const blob = await imgResponse.blob();
+          
+          // Convert blob to base64
+          originalImageBase64 = await new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        } catch (err) {
+          console.error("Error converting image to base64:", err);
+          throw new Error("Could not process the image for editing");
+        }
+      }
+      
+      // Use the correct story edit endpoint with base64 image data
+      const response = await fetch('http://localhost:3001/api/story/edit-scene-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          originalPrompt: selectedScene.visualPrompt || selectedScene.enhancedPrompt,
-          editPrompt: editPrompt
+          originalImageBase64: originalImageBase64,
+          editPrompt: editPrompt,
+          sceneNumber: selectedScene.sceneNumber,
+          sceneContext: selectedScene
         })
       })
       
       const result = await response.json()
       
       if (!result.success) {
-        throw new Error(result.error)
+        throw new Error(result.error || 'Failed to edit scene')
       }
 
       // Update the scene with new image
@@ -72,8 +97,11 @@ const SceneEditor = ({ storyData, scenes, onScenesGenerated, onPreview, onBack }
         scene.sceneNumber === selectedScene.sceneNumber 
           ? { 
               ...scene, 
-              image: result.image,
-              visualPrompt: result.image.prompt
+              image: {
+                ...scene.image,
+                imageUrl: result.editedImage,
+                prompt: result.editPrompt
+              }
             }
           : scene
       )
@@ -158,36 +186,53 @@ const SceneEditor = ({ storyData, scenes, onScenesGenerated, onPreview, onBack }
             </div>
             
             <div className="current-scene">
-              <img 
-                src={selectedScene.image.imageUrl} 
-                alt={`Scene ${selectedScene.sceneNumber}`}
-              />
+              <div className="relative">
+                <img 
+                  src={selectedScene.image.imageUrl} 
+                  alt={`Scene ${selectedScene.sceneNumber}`}
+                />
+                {isEditing && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <Loader2 className="w-12 h-12 animate-spin text-white" />
+                  </div>
+                )}
+              </div>
               <p>{selectedScene.description}</p>
             </div>
             
             <div className="edit-controls">
-              <input
-                type="text"
-                value={editPrompt}
-                onChange={(e) => setEditPrompt(e.target.value)}
-                placeholder="Describe your changes (e.g., 'Make it nighttime', 'Change dress to red')"
-                className="edit-input"
-              />
-              <div className="edit-actions">
-                <button 
-                  onClick={() => setSelectedScene(null)}
-                  className="btn btn-outline"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={handleEditScene}
-                  disabled={!editPrompt.trim() || isEditing}
-                  className="btn btn-primary"
-                >
-                  {isEditing ? 'Applying...' : 'Apply Changes'}
-                </button>
-              </div>
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (editPrompt.trim() && !isEditing) {
+                  handleEditScene();
+                }
+              }}>
+                <input
+                  type="text"
+                  value={editPrompt}
+                  onChange={(e) => setEditPrompt(e.target.value)}
+                  placeholder="Describe your changes (e.g., 'Make it nighttime', 'Change dress to red')"
+                  className="edit-input"
+                  disabled={isEditing}
+                />
+                <div className="edit-actions">
+                  <button 
+                    type="button"
+                    onClick={() => setSelectedScene(null)}
+                    className="btn btn-outline"
+                    disabled={isEditing}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={!editPrompt.trim() || isEditing}
+                    className="btn btn-primary"
+                  >
+                    {isEditing ? 'Applying...' : 'Apply Changes'}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>

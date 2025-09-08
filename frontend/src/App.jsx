@@ -23,7 +23,7 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/create" element={<CreateStoryPage />} />
           <Route path="/story/:id" element={<ViewStoryPage />} />
-          <Route path="/about" element={<AboutPage />} />
+          {/* <Route path="/about" element={<AboutPage />} /> */}
         </Routes>
       </motion.main>
 
